@@ -25,13 +25,30 @@ var blanketNode = function (userOptions,cli){
     }
 
     var blanketConfigs = packageConfigs ? extend(packageConfigs,userOptions) : userOptions,
-
-        pattern = blanketConfigs  ?
-                          blanketConfigs.pattern :
-                          "src",
         blanket = require("./blanket").blanket,
-        oldLoader = require.extensions['.js'],
-        newLoader;
+        loaders = {},
+        pattern,
+        extensions;
+
+    if (blanketConfigs) {
+        pattern = blanketConfigs.pattern;
+        extensions = blanketConfigs.extensions;
+    }
+
+    if (!pattern) {
+        pattern = "src";
+    }
+
+    if (!extensions) {
+        extensions = ['.js'];
+    }
+
+    extensions.forEach(function (extension) {
+       loaders[extension] = {
+           newLoader: null,
+           oldLoader: require.extensions[extension]
+       };
+    });
 
     function escapeRegExp(str) {
         return str.replace(/[\-\[\]\/\{\}\(\)\*\+\?\.\\\^\$\|]/g, "\\$&");
@@ -79,16 +96,22 @@ var blanketNode = function (userOptions,cli){
     };
 
     blanket.restoreNormalLoader = function () {
-      if (!blanket.options("engineOnly")){
-        newLoader = require.extensions['.js'];
-        require.extensions['.js'] = oldLoader;
-      }
+        if (!blanket.options("engineOnly")){
+            extensions.forEach(function (extension) {
+                var config = loaders[extension];
+                config.newLoader = require.extensions[extension];
+                require.extensions[extension] = config.oldLoader;
+            });
+        }
     };
 
     blanket.restoreBlanketLoader = function () {
-      if (!blanket.options("engineOnly")){
-        require.extensions['.js'] = newLoader;
-      }
+        if (!blanket.options("engineOnly")){
+            extensions.forEach(function (extension) {
+                var config = loaders[extension];
+                require.extensions[extension] = config.newLoader;
+            });
+        }
     };
 
     //you can pass in a string, a regex, or an array of files
@@ -125,60 +148,72 @@ var blanketNode = function (userOptions,cli){
         }
     };
     if (!blanket.options("engineOnly")){
-        //instrument js files
-        require.extensions['.js'] = function(localModule, filename) {
-            var pattern = blanket.options("filter"),
-                reporter_options = blanket.options("reporter_options"),
-                originalFilename = filename;
-            filename = blanket.normalizeBackslashes(filename);
+        extensions.forEach(function (extension) {
+            var config = loaders[extension];
+            var oldLoader = config.oldLoader;
 
-            //we check the never matches first
-            var antipattern = _blanket.options("antifilter");
-            if (typeof antipattern !== "undefined" &&
-                    blanket.matchPattern(filename.replace(/\.js$/,""),antipattern)
-                ){
-                oldLoader(localModule,filename);
-                if (_blanket.options("debug")) {console.log("BLANKET-File will never be instrumented:"+filename);}
-            }else if (blanket.matchPattern(filename,pattern)){
-                if (_blanket.options("debug")) {console.log("BLANKET-Attempting instrument of:"+filename);}
-                var content = fs.readFileSync(filename, 'utf8');
-                if (reporter_options && reporter_options.shortnames){
-                    filename = filename.replace(process.cwd(),"");
-                }
+            require.extensions[extension] = function(localModule, filename) {
+                var pattern = blanket.options("filter"),
+                    regex = new RegExp("\\. + " + extension + "$"),
+                    reporter_options = blanket.options("reporter_options"),
+                    originalFilename = filename;
+                filename = blanket.normalizeBackslashes(filename);
 
-                blanket.instrument({
-                    inputFile: content,
-                    inputFileName: filename
-                },function(instrumented){
-                    var baseDirPath = blanket.normalizeBackslashes(path.dirname(filename))+'/.';
-                    try{
-                        instrumented = instrumented.replace(/require\s*\(\s*("|')\./g,'require($1'+baseDirPath);
-                        localModule._compile(instrumented, originalFilename);
+                //we check the never matches first
+                var antipattern = _blanket.options("antifilter");
+                if (typeof antipattern !== "undefined" &&
+                    blanket.matchPattern(filename.replace(regex,""),antipattern)
+                    ){
+                    oldLoader(localModule,filename);
+                    if (_blanket.options("debug")) {console.log("BLANKET-File will never be instrumented:"+filename);}
+                }else if (blanket.matchPattern(filename,pattern)){
+                    if (_blanket.options("debug")) {console.log("BLANKET-Attempting instrument of:"+filename);}
+                    var content = fs.readFileSync(filename, 'utf8');
+                    if (reporter_options && reporter_options.shortnames){
+                        filename = filename.replace(process.cwd(),"");
                     }
-                    catch(err){
-                        if (_blanket.options("ignoreScriptError")){
-                            //we can continue like normal if
-                            //we're ignoring script errors,
-                            //but otherwise we don't want
-                            //to completeLoad or the error might be
-                            //missed.
-                            if (_blanket.options("debug")) {console.log("BLANKET-There was an error loading the file:"+filename);}
-                            oldLoader(localModule,filename);
-                        }else{
-                            throw new Error("BLANKET-Error parsing instrumented code: "+err);
+
+                    blanket.instrument({
+                        inputFile: content,
+                        inputFileName: filename
+                    },function(instrumented){
+                        var baseDirPath = blanket.normalizeBackslashes(path.dirname(filename))+'/.';
+                        try{
+                            instrumented = instrumented.replace(/require\s*\(\s*("|')\./g,'require($1'+baseDirPath);
+                            localModule._compile(instrumented, originalFilename);
                         }
-                    }
-                });
-            }else{
-                oldLoader(localModule, originalFilename);
-            }
-        };
+                        catch(err){
+                            if (_blanket.options("ignoreScriptError")){
+                                //we can continue like normal if
+                                //we're ignoring script errors,
+                                //but otherwise we don't want
+                                //to completeLoad or the error might be
+                                //missed.
+                                if (_blanket.options("debug")) {console.log("BLANKET-There was an error loading the file:"+filename);}
+                                oldLoader(localModule,filename);
+                            }else{
+                                throw new Error("BLANKET-Error parsing instrumented code: "+err);
+                            }
+                        }
+                    });
+                }else{
+                    oldLoader(localModule, originalFilename);
+                }
+            };
+        });
     }
+
     //if a loader is specified, use it
     if (blanket.options("loader")){
         require(blanket.options("loader"))(blanket);
     }
-    newLoader = require.extensions['.js'];
+
+    // iterate over extensions and set up the new loaders
+    extensions.forEach(function (extension) {
+        var config = loaders[extension];
+        config.newLoader = require.extensions[extension];
+    });
+
     return blanket;
 };
 
