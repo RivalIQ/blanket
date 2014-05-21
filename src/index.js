@@ -28,11 +28,13 @@ var blanketNode = function (userOptions,cli){
         blanket = require("./blanket").blanket,
         loaders = {},
         pattern,
-        extensions;
+        extensions,
+        compilers;
 
     if (blanketConfigs) {
         pattern = blanketConfigs.pattern;
         extensions = blanketConfigs.extensions;
+        compilers = blanketConfigs.compilers;
     }
 
     if (!pattern) {
@@ -41,6 +43,10 @@ var blanketNode = function (userOptions,cli){
 
     if (!extensions) {
         extensions = ['.js'];
+    }
+
+    if (!compilers) {
+        compilers = {};
     }
 
     extensions.forEach(function (extension) {
@@ -177,10 +183,16 @@ var blanketNode = function (userOptions,cli){
                         inputFile: content,
                         inputFileName: filename
                     },function(instrumented){
-                        var baseDirPath = blanket.normalizeBackslashes(path.dirname(filename))+'/.';
                         try{
-                            instrumented = instrumented.replace(/require\s*\(\s*("|')\./g,'require($1'+baseDirPath);
-                            localModule._compile(instrumented, originalFilename);
+                            var compiler = compilers[extension];
+
+                            // check to see if a compiler exists for this extension and use it
+                            // if it does, otherwise use the default compilation behavior
+                            if (typeof compiler === 'function') {
+                                compiler(localModule, originalFilename, instrumented);
+                            } else {
+                                localModule._compile(instrumented, originalFilename);
+                            }
                         }
                         catch(err){
                             if (_blanket.options("ignoreScriptError")){
