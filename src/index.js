@@ -150,9 +150,7 @@ var blanketNode = function (userOptions,cli){
                     inputFile: content,
                     inputFileName: filename
                 },function(instrumented){
-                    var baseDirPath = blanket.normalizeBackslashes(path.dirname(filename))+'/.';
                     try{
-                        instrumented = instrumented.replace(/require\s*\(\s*("|')\./g,'require($1'+baseDirPath);
                         localModule._compile(instrumented, originalFilename);
                     }
                     catch(err){
