@@ -5,8 +5,15 @@ module.exports = function(blanket){
 
     require.extensions['._js'] = function(localModule, filename) {
         var pattern = blanket.options("filter");
+        var antiPattern = blanket.options("antifilter");
+
         filename = blanket.normalizeBackslashes(filename);
-        if (blanket.matchPattern(filename,pattern)){
+
+        // determine whether this file should be instrumented or not per
+        // the filter, if it was specified
+        var isFiltered = (typeof antiPattern !== "undefined" && blanket.matchPattern(filename, antiPattern));
+
+        if (blanket.matchPattern(filename,pattern) && !isFiltered) {
             var content = fs.readFileSync(filename, 'utf8');
             blanket.instrument({
                 inputFile: content,
@@ -19,8 +26,8 @@ module.exports = function(blanket){
                     console.log("Error parsing instrumented code: "+err);
                 }
             });
-        }else{
-            oldLoaderSL(localModule,filename);
+        } else{
+            oldLoaderSL(localModule, filename);
         }
     };
 };
